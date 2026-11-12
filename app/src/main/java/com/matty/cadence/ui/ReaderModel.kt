@@ -122,7 +122,7 @@ class ReaderModel(
 
     /** Advance by dt seconds (called every frame while the reader is on screen). */
     fun tick(dt: Double) {
-        sleepEndsAt?.let { if (System.currentTimeMillis() >= it) { sleepEndsAt = null; setPlaying(false) } }
+        sleepEndsAt?.let { if (System.currentTimeMillis() >= it) { sleepEndsAt = null; playing(false) } }
         if (hasAudio) audioTick() else textTick(dt)
     }
 
@@ -150,7 +150,7 @@ class ReaderModel(
         val end = chapter.t1
         if (end != null && t >= end) {
             if (chapterIndex + 1 < book.chapters.size) loadSegments(chapterIndex + 1, 0)
-            else { setPlaying(false); finished = true }
+            else { playing(false); finished = true }
             return
         }
         if (segments.isNotEmpty()) {
@@ -177,13 +177,13 @@ class ReaderModel(
         if (finished) {
             finished = false
             load(0, 0)
-            setPlaying(true)
+            playing(true)
             return
         }
-        setPlaying(!isPlaying)
+        playing(!isPlaying)
     }
 
-    fun setPlaying(on: Boolean) {
+    fun playing(on: Boolean) {
         isPlaying = on
         val p = player
         if (p != null) {
@@ -213,17 +213,17 @@ class ReaderModel(
         } else {
             val target = f * chapterDuration
             val i = segmentStart.indexOfLast { it <= target }.coerceAtLeast(0)
-            setCurrent(i)
+            moveTo(i)
         }
     }
 
     fun setRate(r: Float) {
-        prefs.setRate(r)
+        prefs.chooseRate(r)
         player?.setPlaybackSpeed(r)
     }
 
     fun setWpm(v: Double) {
-        prefs.setWpm(v)
+        prefs.chooseWpm(v)
         rebuildTimeline(keepProgress = true)
     }
 
@@ -244,9 +244,9 @@ class ReaderModel(
 
     private fun advanceText() {
         when {
-            current + 1 < segments.size -> setCurrent(current + 1)
+            current + 1 < segments.size -> moveTo(current + 1)
             chapterIndex + 1 < book.chapters.size -> load(chapterIndex + 1)
-            else -> { setPlaying(false); finished = true }
+            else -> { playing(false); finished = true }
         }
     }
 
@@ -262,11 +262,11 @@ class ReaderModel(
             if (chapterIndex + 1 < book.chapters.size) load(chapterIndex + 1)
             return
         }
-        setCurrent(index)
+        moveTo(index)
         if (hasAudio) seekAudio(segments[index].t0)
     }
 
-    private fun setCurrent(i: Int) {
+    private fun moveTo(i: Int) {
         current = i
         segElapsed = 0.0
         revealed = 0.0

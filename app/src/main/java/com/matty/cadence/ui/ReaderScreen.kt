@@ -158,12 +158,12 @@ fun ReaderScreen(book: Book, startChapter: Int, startSegment: Int, onClose: () -
 
     fun touch() { lastTouch = System.currentTimeMillis() }
     fun openSheet(s: Sheet) {
-        if (s == Sheet.LOOKUP && model.isPlaying) { resumeAfterLookup = true; model.setPlaying(false) }
+        if (s == Sheet.LOOKUP && model.isPlaying) { resumeAfterLookup = true; model.playing(false) }
         sheet = s
         touch()
     }
     fun closeSheet() {
-        if (sheet == Sheet.LOOKUP && resumeAfterLookup) { resumeAfterLookup = false; model.setPlaying(true) }
+        if (sheet == Sheet.LOOKUP && resumeAfterLookup) { resumeAfterLookup = false; model.playing(true) }
         sheet = null
     }
 
@@ -171,7 +171,7 @@ fun ReaderScreen(book: Book, startChapter: Int, startSegment: Int, onClose: () -
         when {
             sheet != null -> closeSheet()
             chrome -> chrome = false
-            prefs.mode == ReaderMode.CARD -> prefs.setMode(ReaderMode.SINGLE)
+            prefs.mode == ReaderMode.CARD -> prefs.chooseMode(ReaderMode.SINGLE)
             else -> onClose()
         }
     }
@@ -196,7 +196,7 @@ fun ReaderScreen(book: Book, startChapter: Int, startSegment: Int, onClose: () -
                         if (abs(total.x) > abs(total.y) && abs(total.x) > swipe) {
                             if (total.x < 0) model.next() else model.previous()
                         } else if (total.y < -swipe) {
-                            prefs.setMode(if (prefs.mode == ReaderMode.FLOWING) ReaderMode.SINGLE else ReaderMode.FLOWING)
+                            prefs.chooseMode(if (prefs.mode == ReaderMode.FLOWING) ReaderMode.SINGLE else ReaderMode.FLOWING)
                         } else if (total.y > swipe) {
                             chrome = true
                         }
@@ -219,7 +219,7 @@ fun ReaderScreen(book: Book, startChapter: Int, startSegment: Int, onClose: () -
         ) {
             Controls(model, onClose = onClose, onSheet = { openSheet(it) }, onTouch = { touch() }, onCard = {
                 chrome = false
-                prefs.setMode(ReaderMode.CARD)
+                prefs.chooseMode(ReaderMode.CARD)
             })
         }
         AnimatedVisibility(visible = chrome, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.TopStart)) {
@@ -381,7 +381,7 @@ private fun Controls(model: ReaderModel, onClose: () -> Unit, onSheet: (Sheet) -
             RoundButton(if (prefs.mode == ReaderMode.FLOWING) Icons.Outlined.ViewAgenda else Icons.AutoMirrored.Outlined.Subject,
                 if (prefs.mode == ReaderMode.FLOWING) "One sentence at a time" else "Whole chapter") {
                 onTouch()
-                prefs.setMode(if (prefs.mode == ReaderMode.FLOWING) ReaderMode.SINGLE else ReaderMode.FLOWING)
+                prefs.chooseMode(if (prefs.mode == ReaderMode.FLOWING) ReaderMode.SINGLE else ReaderMode.FLOWING)
             }
             RoundButton(Icons.Outlined.OpenInFull, "Full-screen card") { onCard() }
             RoundButton(Icons.Outlined.FormatSize, "Reading style") { onSheet(Sheet.STYLE) }

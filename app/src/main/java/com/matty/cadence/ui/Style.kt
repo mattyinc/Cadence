@@ -68,15 +68,15 @@ class Prefs(context: Context) {
     val font: ReadingFont get() = readingFonts.firstOrNull { it.id == fontId } ?: readingFonts[0]
     val scale: Float get() = 1f + 0.12f * sizeStep
 
-    fun setTheme(v: ThemeMode) { themeMode = v; p.edit().putString("theme", v.name).apply() }
-    fun setPage(v: PageStyle) { page = v; p.edit().putString("page", v.name).apply() }
-    fun setFont(v: String) { fontId = v; p.edit().putString("font", v).apply() }
-    fun setSize(v: Int) { sizeStep = v.coerceIn(-3, 5); p.edit().putInt("size", sizeStep).apply() }
-    fun setMargins(v: Margins) { margins = v; p.edit().putString("margins", v.name).apply() }
-    fun setSpacing(v: LineSpacing) { spacing = v; p.edit().putString("spacing", v.name).apply() }
-    fun setWpm(v: Double) { wpm = v; p.edit().putFloat("wpm", v.toFloat()).apply() }
-    fun setRate(v: Float) { rate = v; p.edit().putFloat("rate", v).apply() }
-    fun setMode(v: ReaderMode) { mode = v; if (v != ReaderMode.CARD) p.edit().putString("mode", v.name).apply() }
+    fun chooseTheme(v: ThemeMode) { themeMode = v; p.edit().putString("theme", v.name).apply() }
+    fun choosePage(v: PageStyle) { page = v; p.edit().putString("page", v.name).apply() }
+    fun chooseFont(v: String) { fontId = v; p.edit().putString("font", v).apply() }
+    fun chooseSize(v: Int) { sizeStep = v.coerceIn(-3, 5); p.edit().putInt("size", sizeStep).apply() }
+    fun chooseMargins(v: Margins) { margins = v; p.edit().putString("margins", v.name).apply() }
+    fun chooseSpacing(v: LineSpacing) { spacing = v; p.edit().putString("spacing", v.name).apply() }
+    fun chooseWpm(v: Double) { wpm = v; p.edit().putFloat("wpm", v.toFloat()).apply() }
+    fun chooseRate(v: Float) { rate = v; p.edit().putFloat("rate", v).apply() }
+    fun chooseMode(v: ReaderMode) { mode = v; if (v != ReaderMode.CARD) p.edit().putString("mode", v.name).apply() }
 
     private inline fun <reified E : Enum<E>> enumOr(name: String?, fallback: E): E =
         runCatching { enumValueOf<E>(name ?: "") }.getOrDefault(fallback)

@@ -42,8 +42,8 @@ fun SettingsScreen() {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             SectionTitle("Appearance")
             FlowRow2 {
-                Pill("Dark", selected = prefs.themeMode == ThemeMode.DARK, icon = Icons.Outlined.DarkMode) { prefs.setTheme(ThemeMode.DARK) }
-                Pill("Light", selected = prefs.themeMode == ThemeMode.LIGHT, icon = Icons.Outlined.LightMode) { prefs.setTheme(ThemeMode.LIGHT) }
+                Pill("Dark", selected = prefs.themeMode == ThemeMode.DARK, icon = Icons.Outlined.DarkMode) { prefs.chooseTheme(ThemeMode.DARK) }
+                Pill("Light", selected = prefs.themeMode == ThemeMode.LIGHT, icon = Icons.Outlined.LightMode) { prefs.chooseTheme(ThemeMode.LIGHT) }
             }
         }
 
@@ -56,7 +56,7 @@ fun SettingsScreen() {
             SectionTitle("Reading speed (books without audio) · words per minute")
             FlowRow2 {
                 for (v in SyntheticTiming.speeds) {
-                    Pill("${v.toInt()}", selected = prefs.wpm.toInt() == v.toInt()) { prefs.setWpm(v) }
+                    Pill("${v.toInt()}", selected = prefs.wpm.toInt() == v.toInt()) { prefs.chooseWpm(v) }
                 }
             }
         }
@@ -90,7 +90,7 @@ fun ReadingStyleControls(compact: Boolean, amharic: Boolean) {
                     Column(
                         Modifier.clip(RoundedCornerShape(14.dp))
                             .background(if (sel) pal.text else pal.glass)
-                            .clickable { prefs.setFont(f.id) }
+                            .clickable { prefs.chooseFont(f.id) }
                             .padding(horizontal = 18.dp, vertical = 12.dp)
                     ) {
                         Text(f.name, color = if (sel) pal.onFocus else pal.text, fontFamily = f.family, fontSize = 19.sp,
@@ -104,31 +104,31 @@ fun ReadingStyleControls(compact: Boolean, amharic: Boolean) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Label("Size")
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Pill("A−") { prefs.setSize(prefs.sizeStep - 1) }
+                    Pill("A−") { prefs.chooseSize(prefs.sizeStep - 1) }
                     Text("${(prefs.scale * 100).toInt()}%", color = pal.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.padding(horizontal = 14.dp))
-                    Pill("A+") { prefs.setSize(prefs.sizeStep + 1) }
+                    Pill("A+") { prefs.chooseSize(prefs.sizeStep + 1) }
                 }
             }
             Spacer(Modifier.width(24.dp))
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Label("Page")
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    for (p in PageStyle.entries) Pill(p.label, selected = prefs.page == p) { prefs.setPage(p) }
+                    for (p in PageStyle.entries) Pill(p.label, selected = prefs.page == p) { prefs.choosePage(p) }
                 }
             }
             Spacer(Modifier.width(24.dp))
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Label("Margins")
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    for (m in Margins.entries) Pill(m.label, selected = prefs.margins == m) { prefs.setMargins(m) }
+                    for (m in Margins.entries) Pill(m.label, selected = prefs.margins == m) { prefs.chooseMargins(m) }
                 }
             }
             Spacer(Modifier.width(24.dp))
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Label("Line spacing")
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    for (s in LineSpacing.entries) Pill(s.label, selected = prefs.spacing == s) { prefs.setSpacing(s) }
+                    for (s in LineSpacing.entries) Pill(s.label, selected = prefs.spacing == s) { prefs.chooseSpacing(s) }
                 }
             }
         }
