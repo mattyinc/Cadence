@@ -217,7 +217,21 @@ internal fun graphError(resp: okhttp3.Response): GraphException {
     val msg = runCatching {
         json.parseToJsonElement(body).jsonObject["error"]?.jsonObject?.let { e -> e.str("message") ?: e.str("code") }
     }.getOrNull()
-    return GraphException("OneDrive said ${resp.code}" + (msg?.let { ": $it" } ?: "."), resp.code)
+    return GraphException("OneDrive said ${resp.code}" + (msg?.let { ": $it" } ?: "") + " (${resp.request.url.host})", resp.code)
+}
+
+private val noRedirect: OkHttpClient by lazy { http.newBuilder().followRedirects(false).followSslRedirects(false).build() }
+
+/** Storage link: usually pre-authenticated; if it wants the token after all, send it. */
+private fun download(loc: String, token: String): ByteArray {
+    http.newCall(Request.Builder().url(loc).build()).execute().use { r ->
+        if (r.isSuccessful) return r.body!!.bytes()
+        if (r.code != 401 && r.code != 403) throw graphError(r)
+    }
+    http.newCall(Request.Builder().url(loc).header("Authorization", "Bearer $token").build()).execute().use { r ->
+        if (r.isSuccessful) return r.body!!.bytes()
+        throw GraphException("OneDrive storage said ${r.code} (${r.request.url.host}).", r.code)
+    }
 }
 
 /** Reads files from the Cadence app folder. */
@@ -231,9 +245,16 @@ class OneDriveFiles(private val auth: OneDriveAuth) {
     suspend fun bytes(rel: String): ByteArray {
         val token = auth.token()
         return withContext(Dispatchers.IO) {
-            val req = Request.Builder().url(url(rel, ":/content")).header("Authorization", "Bearer $token").build()
-            http.newCall(req).execute().use { resp ->
+            // Graph answers /content with a redirect to OneDrive's file storage. OkHttp strips the
+            // Authorization header on cross-host redirects (the Apple TV's URLSession doesn't), and personal
+            // OneDrive storage then says a bare 401 — so follow the redirect ourselves.
+            val first = Request.Builder().url(url(rel, ":/content")).header("Authorization", "Bearer $token").build()
+            noRedirect.newCall(first).execute().use { resp ->
                 if (resp.code == 404) throw GraphException("Not found in OneDrive › Apps › Cadence.", 404)
+                if (resp.isRedirect) {
+                    val loc = resp.header("Location") ?: throw GraphException("OneDrive redirect without a location.", resp.code)
+                    return@withContext download(loc, token)
+                }
                 if (!resp.isSuccessful) throw graphError(resp)
                 resp.body!!.bytes()
             }
