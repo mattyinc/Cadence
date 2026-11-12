@@ -39,7 +39,7 @@ import kotlinx.coroutines.delay
 
 enum class Section { BOOKS, AUDIOBOOKS, SETTINGS }
 
-private data class ReaderLaunch(val book: Book, val chapter: Int, val segment: Int)
+private data class ReaderLaunch(val book: Book, val chapter: Int, val segment: Int, val time: Double)
 
 @Composable
 fun CadenceApp(library: Library, prefs: Prefs) {
@@ -75,9 +75,9 @@ fun CadenceApp(library: Library, prefs: Prefs) {
                 val r = reader
                 val o = open
                 when {
-                    r != null -> ReaderScreen(r.book, r.chapter, r.segment, onClose = { reader = null })
+                    r != null -> ReaderScreen(r.book, r.chapter, r.segment, r.time, onClose = { reader = null })
                     o != null -> Box(Modifier.safeDrawingPadding()) {
-                        BookScreen(o, onBack = { open = null }, onRead = { b, c, s -> reader = ReaderLaunch(b, c, s) })
+                        BookScreen(o, onBack = { open = null }, onRead = { b, c, s, t -> reader = ReaderLaunch(b, c, s, t) })
                     }
                     else -> Row(Modifier.safeDrawingPadding()) {
                         NavigationRail(containerColor = pal.bg.copy(alpha = 0.6f)) {

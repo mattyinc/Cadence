@@ -4,8 +4,14 @@ import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
 import java.io.File
 
 sealed class LibraryStatus {
@@ -15,7 +21,18 @@ sealed class LibraryStatus {
     data class Failed(val message: String) : LibraryStatus()
 }
 
-data class Position(val chapter: Int, val segment: Int)
+/**
+ * Where you are in a book. Synced through OneDrive (positions/<book id>.json) so the tablet and the
+ * Apple TV pick up from the same place; the newest `updated` wins.
+ */
+@Serializable
+data class Position(
+    val chapter: Int,
+    val segment: Int,
+    val time: Double = 0.0,        // audiobooks: seconds into the audio
+    val updated: Long = 0,         // epoch ms
+    val device: String = "android",
+)
 
 /** The shared library: OneDrive › Apps › Cadence/library.json + books/<id>/… */
 class Library(context: Context) {
@@ -90,18 +107,57 @@ class Library(context: Context) {
         return runCatching { files.downloadUrl("books/${b.id}/cover.jpg") }.getOrNull()?.also { coverLinks[key] = it }
     }
 
+    /** Cover link for the lock screen / notification artwork (null if the book has none). */
+    suspend fun coverUrl(bookId: String): String? {
+        val b = books.firstOrNull { it.id == bookId } ?: return null
+        return coverUrl(b)
+    }
+
     /** A fresh streaming link (OneDrive's expire after about an hour). */
     suspend fun audioUrl(book: Book): String? {
         val a = book.audio ?: return null
         return runCatching { files.downloadUrl("books/${book.id}/${a.file}") }.getOrNull()
     }
 
+    // ---------------------------------------------------------------- reading positions
+
+    private val syncScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val uploads = HashMap<String, Job>()
+
+    /** This device's last known position (instant, offline). */
     fun position(id: String): Position? {
-        val c = positions.getInt("$id.c", -1)
+        positions.getString("$id.json", null)?.let { raw ->
+            runCatching { return json.decodeFromString(Position.serializer(), raw) }
+        }
+        val c = positions.getInt("$id.c", -1)            // older builds stored two ints
         return if (c < 0) null else Position(c, positions.getInt("$id.s", 0))
     }
 
-    fun savePosition(id: String, p: Position) {
-        positions.edit().putInt("$id.c", p.chapter).putInt("$id.s", p.segment).apply()
+    /** Saves locally right away and uploads a few seconds later (or now, when `immediately`). */
+    fun savePosition(id: String, p: Position, immediately: Boolean = false) {
+        val stamped = p.copy(updated = System.currentTimeMillis(), device = "android")
+        positions.edit().putString("$id.json", json.encodeToString(Position.serializer(), stamped)).apply()
+        if (!auth.signedIn) return
+        uploads[id]?.cancel()
+        uploads[id] = syncScope.launch {
+            if (!immediately) delay(4000)
+            runCatching {
+                files.put("positions/$id.json", json.encodeToString(Position.serializer(), stamped).encodeToByteArray())
+            }
+        }
+    }
+
+    /** Fetches the position saved on any device; adopts it when it's newer than this tablet's. */
+    suspend fun syncPosition(id: String): Position? {
+        val local = position(id)
+        if (!auth.signedIn) return local
+        val remote = runCatching {
+            json.decodeFromString(Position.serializer(), files.bytes("positions/$id.json").decodeToString())
+        }.getOrNull()
+        if (remote != null && remote.updated > (local?.updated ?: 0)) {
+            positions.edit().putString("$id.json", json.encodeToString(Position.serializer(), remote)).apply()
+            return remote
+        }
+        return local
     }
 }

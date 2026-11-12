@@ -1,16 +1,21 @@
 package com.matty.cadence.ui
 
 import android.content.Context
+import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.session.MediaController
+import com.google.common.util.concurrent.ListenableFuture
+import com.matty.cadence.Playback
 import com.matty.cadence.data.AudioTiming
 import com.matty.cadence.data.Book
 import com.matty.cadence.data.FlowItem
@@ -20,6 +25,8 @@ import com.matty.cadence.data.ReadingSegment
 import com.matty.cadence.data.SyntheticTiming
 import com.matty.cadence.data.flatten
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.max
 import kotlin.math.min
@@ -35,6 +42,7 @@ class ReaderModel(
     val book: Book,
     startChapter: Int,
     startSegment: Int,
+    private val startTime: Double,
     private val library: Library,
     private val prefs: Prefs,
     private val scope: CoroutineScope,
@@ -62,6 +70,20 @@ class ReaderModel(
     var buffering by mutableStateOf(false)
         private set
     var sleepEndsAt by mutableStateOf<Long?>(null)
+        private set
+    private var sleepJob: Job? = null
+
+    /** Sleep timer — a coroutine, so it still fires when the tablet is locked and the screen isn't drawing. */
+    fun sleepIn(minutes: Int?) {
+        sleepJob?.cancel()
+        if (minutes == null) { sleepEndsAt = null; return }
+        sleepEndsAt = System.currentTimeMillis() + minutes * 60_000L
+        sleepJob = scope.launch {
+            delay(minutes * 60_000L)
+            sleepEndsAt = null
+            playing(false)
+        }
+    }
 
     val chapter get() = book.chapters[chapterIndex]
     val segment: ReadingSegment? get() = segments.getOrNull(current)
@@ -74,6 +96,17 @@ class ReaderModel(
 
     // audio clock
     private var player: ExoPlayer? = null
+    private var controller: ListenableFuture<MediaController>? = null
+    private val listener = object : Player.Listener {
+        override fun onPlayerError(error: PlaybackException) { recoverAudio() }
+
+        // play/pause from the lock screen, notification, headphones or Bluetooth
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            if (recovering || isPlaying == playWhenReady) return
+            isPlaying = playWhenReady
+            if (!playWhenReady) savePosition()
+        }
+    }
     private var lastGoodTime = 0.0
     private var urlFetchedAt = 0L
     private var recovering = false
@@ -81,26 +114,29 @@ class ReaderModel(
 
     init {
         if (hasAudio) {
-            player = ExoPlayer.Builder(context).build().apply {
-                playWhenReady = false
-                addListener(object : Player.Listener {
-                    override fun onPlayerError(error: PlaybackException) { recoverAudio() }
-                })
-            }
+            val p = Playback.player(context)
+            p.addListener(listener)
+            player = p
+            controller = Playback.connect(context)      // starts the background playback service
         }
         load(chapterIndex, startSegment)
     }
 
     /** Called once the audio link is known. */
-    fun attachAudio(url: String) {
+    fun attachAudio(url: String, cover: String?) {
         val p = player ?: return
+        artwork = cover
         urlFetchedAt = System.currentTimeMillis()
         p.setMediaItem(mediaItem(url))
         p.prepare()
         p.setPlaybackSpeed(prefs.rate)
-        seekAudio(segment?.let { if (current == 0) chapter.t0 ?: it.t0 else it.t0 } ?: 0.0)
+        val start = if (startTime > 0) startTime
+            else segment?.let { if (current == 0) chapter.t0 ?: it.t0 else it.t0 } ?: 0.0
+        seekAudio(start)
         p.playWhenReady = isPlaying
     }
+
+    private var artwork: String? = null
 
     private fun mediaItem(url: String): MediaItem {
         val ext = book.audio?.file?.substringAfterLast('.', "")?.lowercase()
@@ -109,20 +145,38 @@ class ReaderModel(
             "mp3" -> MimeTypes.AUDIO_MPEG
             else -> null
         }
-        return MediaItem.Builder().setUri(url).apply { if (mime != null) setMimeType(mime) }.build()
+        val meta = MediaMetadata.Builder()
+            .setTitle(book.title)
+            .setArtist(book.author ?: "Cadence")
+            .apply { artwork?.let { setArtworkUri(Uri.parse(it)) } }
+            .build()
+        return MediaItem.Builder().setUri(url).setMediaMetadata(meta)
+            .apply { if (mime != null) setMimeType(mime) }.build()
     }
 
+    /** Leaving the book: stop the narration and let the background service wind down. */
     fun release() {
-        savePosition()
-        player?.release()
+        sleepJob?.cancel()
+        savePosition(immediately = true)
+        player?.let { p ->
+            p.removeListener(listener)
+            p.playWhenReady = false
+            p.clearMediaItems()
+        }
         player = null
+        controller?.let { MediaController.releaseFuture(it) }
+        controller = null
+    }
+
+    /** Keeps the place in the text current while the screen isn't drawing (locked tablet, other app). */
+    fun backgroundTick() {
+        if (hasAudio) audioTick()
     }
 
     // ---------------------------------------------------------------- clock
 
     /** Advance by dt seconds (called every frame while the reader is on screen). */
     fun tick(dt: Double) {
-        sleepEndsAt?.let { if (System.currentTimeMillis() >= it) { sleepEndsAt = null; playing(false) } }
         if (hasAudio) audioTick() else textTick(dt)
     }
 
@@ -331,7 +385,7 @@ class ReaderModel(
         chapterElapsed = (segmentStart.getOrNull(current) ?: 0.0) + segElapsed
     }
 
-    fun savePosition() {
-        library.savePosition(book.id, Position(chapterIndex, current))
+    fun savePosition(immediately: Boolean = false) {
+        library.savePosition(book.id, Position(chapterIndex, current, time = if (hasAudio) lastGoodTime else 0.0), immediately)
     }
 }

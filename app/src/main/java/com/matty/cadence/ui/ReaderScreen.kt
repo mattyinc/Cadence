@@ -111,13 +111,13 @@ private enum class Sheet { CHAPTERS, STYLE, SPEED, SLEEP, LOOKUP }
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ReaderScreen(book: Book, startChapter: Int, startSegment: Int, onClose: () -> Unit) {
+fun ReaderScreen(book: Book, startChapter: Int, startSegment: Int, startTime: Double, onClose: () -> Unit) {
     val context = LocalContext.current
     val library = LocalLibrary.current
     val prefs = LocalPrefs.current
     val pal = LocalPalette.current
     val scope = rememberCoroutineScope()
-    val model = remember(book.id) { ReaderModel(context, book, startChapter, startSegment, library, prefs, scope) }
+    val model = remember(book.id) { ReaderModel(context, book, startChapter, startSegment, startTime, library, prefs, scope) }
 
     var chrome by remember { mutableStateOf(false) }
     var sheet by remember { mutableStateOf<Sheet?>(null) }
@@ -126,7 +126,13 @@ fun ReaderScreen(book: Book, startChapter: Int, startSegment: Int, onClose: () -
 
     // lifecycle: audio link, frame clock, screen awake, full screen
     DisposableEffect(model) { onDispose { model.release() } }
-    LaunchedEffect(model) { if (model.hasAudio) library.audioUrl(book)?.let { model.attachAudio(it) } }
+    LaunchedEffect(model) {
+        if (model.hasAudio) library.audioUrl(book)?.let { model.attachAudio(it, library.coverUrl(book.id)) }
+    }
+    // keeps the text position (and the saved place) moving while the tablet is locked — frames stop, this doesn't
+    LaunchedEffect(model) {
+        while (true) { delay(1000); model.backgroundTick() }
+    }
     LaunchedEffect(model) {
         var last = withFrameNanos { it }
         while (true) {
@@ -468,9 +474,9 @@ private fun SleepSheet(model: ReaderModel, done: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         SectionTitle("Sleep timer")
         FlowRow2 {
-            Pill("Off", selected = model.sleepEndsAt == null) { model.sleepEndsAt = null; done() }
+            Pill("Off", selected = model.sleepEndsAt == null) { model.sleepIn(null); done() }
             for (m in listOf(15, 30, 45, 60)) {
-                Pill("$m minutes") { model.sleepEndsAt = System.currentTimeMillis() + m * 60_000L; done() }
+                Pill("$m minutes") { model.sleepIn(m); done() }
             }
         }
     }

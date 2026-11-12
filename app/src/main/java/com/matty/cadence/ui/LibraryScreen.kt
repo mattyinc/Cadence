@@ -204,16 +204,19 @@ fun FlowRow2(content: @Composable () -> Unit) {
 // ---------------------------------------------------------------- one book: chapters
 
 @Composable
-fun BookScreen(summary: BookSummary, onBack: () -> Unit, onRead: (Book, Int, Int) -> Unit) {
+fun BookScreen(summary: BookSummary, onBack: () -> Unit, onRead: (Book, Int, Int, Double) -> Unit) {
     val pal = LocalPalette.current
     val library = LocalLibrary.current
     var error by remember { mutableStateOf<String?>(null) }
     val book by produceState<Book?>(null, summary.id) {
         value = try { library.book(summary.id) } catch (e: Exception) { error = "Couldn't open this book: ${e.message}"; null }
     }
-    // refresh positions when coming back from the reader
+    // the newest position from any device (tablet or Apple TV), checked each time this page opens
     var tick by remember { mutableStateOf(0) }
-    LaunchedEffect(Unit) { tick++ }
+    LaunchedEffect(summary.id) {
+        library.syncPosition(summary.id)
+        tick++
+    }
 
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.padding(start = 12.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -229,7 +232,7 @@ fun BookScreen(summary: BookSummary, onBack: () -> Unit, onRead: (Book, Int, Int
 }
 
 @Composable
-private fun ChapterGrid(book: Book, @Suppress("UNUSED_PARAMETER") tick: Int, onRead: (Book, Int, Int) -> Unit) {
+private fun ChapterGrid(book: Book, @Suppress("UNUSED_PARAMETER") tick: Int, onRead: (Book, Int, Int, Double) -> Unit) {
     val pal = LocalPalette.current
     val library = LocalLibrary.current
     val pos = library.position(book.id)
@@ -250,8 +253,9 @@ private fun ChapterGrid(book: Book, @Suppress("UNUSED_PARAMETER") tick: Int, onR
                 )
                 if (pos != null && pos.chapter in book.chapters.indices) {
                     Spacer(Modifier.height(4.dp))
-                    Pill("Continue · ${book.chapters[pos.chapter].title}", selected = true, icon = Icons.Outlined.PlayArrow) {
-                        onRead(book, pos.chapter, pos.segment)
+                    Pill("Continue · ${book.chapters[pos.chapter].title}" + if (pos.device == "tv") " (from Apple TV)" else "",
+                        selected = true, icon = Icons.Outlined.PlayArrow) {
+                        onRead(book, pos.chapter, pos.segment, pos.time)
                     }
                 }
             }
@@ -262,7 +266,7 @@ private fun ChapterGrid(book: Book, @Suppress("UNUSED_PARAMETER") tick: Int, onR
                 Modifier
                     .clip(RoundedCornerShape(14.dp))
                     .background(if (current) pal.selected else pal.glass)
-                    .clickable { onRead(book, ch.index, 0) }
+                    .clickable { onRead(book, ch.index, 0, 0.0) }
                     .padding(16.dp)
             ) {
                 Text("${ch.index + 1}", color = pal.secondary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)

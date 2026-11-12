@@ -14,7 +14,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
@@ -176,6 +178,18 @@ class OneDriveFiles(private val auth: OneDriveAuth) {
                 if (resp.code == 404) throw GraphException("Not found in OneDrive › Apps › Cadence.", 404)
                 if (!resp.isSuccessful) throw GraphException("OneDrive error ${resp.code}.", resp.code)
                 resp.body!!.bytes()
+            }
+        }
+    }
+
+    /** Writes a small file (reading positions). */
+    suspend fun put(rel: String, data: ByteArray, contentType: String = "application/json") {
+        val token = auth.token()
+        withContext(Dispatchers.IO) {
+            val body = data.toRequestBody(contentType.toMediaType())
+            val req = Request.Builder().url(url(rel, ":/content")).header("Authorization", "Bearer $token").put(body).build()
+            http.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) throw GraphException("OneDrive error ${resp.code}.", resp.code)
             }
         }
     }
