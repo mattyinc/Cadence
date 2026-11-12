@@ -58,7 +58,10 @@ class OneDriveAuth(context: Context) {
     var refreshToken by mutableStateOf(prefs.getString("refresh", null))
         private set
 
-    val signedIn: Boolean get() = refreshToken != null
+    val signedIn: Boolean get() = refreshToken != null || (accessToken != null && System.currentTimeMillis() < expiresAt)
+
+    /** Shown on the Connect card so a failed sign-in never just silently loops. */
+    fun report(problem: String) { error = problem }
 
     private var accessToken: String? = null
     private var expiresAt = 0L
@@ -175,7 +178,9 @@ class OneDriveAuth(context: Context) {
         val at = r.str("access_token") ?: return false
         accessToken = at
         expiresAt = System.currentTimeMillis() + 1000L * ((r["expires_in"]?.jsonPrimitive?.intOrNull ?: 3600) - 120)
-        r.str("refresh_token")?.let { saveRefresh(it) }
+        val rt = r.str("refresh_token")
+        if (rt != null) saveRefresh(rt)
+        else if (refreshToken == null) error = "Microsoft didn't send a long-term sign-in (no refresh token) — you'll need to sign in again in an hour."
         return true
     }
 
@@ -186,8 +191,10 @@ class OneDriveAuth(context: Context) {
             "grant_type" to "refresh_token", "client_id" to OneDriveConfig.CLIENT_ID,
             "refresh_token" to rt, "scope" to OneDriveConfig.SCOPE))
         if (!store(r)) {
+            val why = r.str("error_description")?.lineSequence()?.firstOrNull() ?: r.str("error") ?: "no answer"
+            error = "Microsoft wouldn't renew the sign-in: $why"
             if (r.str("error") == "invalid_grant") saveRefresh(null)
-            throw GraphException("Sign in to OneDrive in Settings.", 401)
+            throw GraphException(error!!, 401)
         }
         return accessToken!!
     }
@@ -196,13 +203,22 @@ class OneDriveAuth(context: Context) {
         val body = FormBody.Builder().apply { form.forEach { (k, v) -> add(k, v) } }.build()
         http.newCall(Request.Builder().url(url).post(body).build()).execute().use { resp ->
             val text = resp.body?.string().orEmpty()
-            runCatching { json.parseToJsonElement(text).jsonObject }.getOrDefault(JsonObject(emptyMap()))
+            runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull()
+                ?: JsonObject(mapOf("error" to kotlinx.serialization.json.JsonPrimitive("HTTP ${resp.code} from login.microsoftonline.com")))
         }
     }
 }
 
 private fun JsonObject.str(key: String): String? =
     this[key]?.jsonPrimitive?.let { if (it.isString) it.content else it.content.takeIf { c -> c != "null" } }
+
+internal fun graphError(resp: okhttp3.Response): GraphException {
+    val body = runCatching { resp.body?.string().orEmpty() }.getOrDefault("")
+    val msg = runCatching {
+        json.parseToJsonElement(body).jsonObject["error"]?.jsonObject?.let { e -> e.str("message") ?: e.str("code") }
+    }.getOrNull()
+    return GraphException("OneDrive said ${resp.code}" + (msg?.let { ": $it" } ?: "."), resp.code)
+}
 
 /** Reads files from the Cadence app folder. */
 class OneDriveFiles(private val auth: OneDriveAuth) {
@@ -218,7 +234,7 @@ class OneDriveFiles(private val auth: OneDriveAuth) {
             val req = Request.Builder().url(url(rel, ":/content")).header("Authorization", "Bearer $token").build()
             http.newCall(req).execute().use { resp ->
                 if (resp.code == 404) throw GraphException("Not found in OneDrive › Apps › Cadence.", 404)
-                if (!resp.isSuccessful) throw GraphException("OneDrive error ${resp.code}.", resp.code)
+                if (!resp.isSuccessful) throw graphError(resp)
                 resp.body!!.bytes()
             }
         }
@@ -243,7 +259,7 @@ class OneDriveFiles(private val auth: OneDriveAuth) {
             val req = Request.Builder().url(url(rel)).header("Authorization", "Bearer $token").build()
             http.newCall(req).execute().use { resp ->
                 if (resp.code == 404) throw GraphException("Not found in OneDrive › Apps › Cadence.", 404)
-                if (!resp.isSuccessful) throw GraphException("OneDrive error ${resp.code}.", resp.code)
+                if (!resp.isSuccessful) throw graphError(resp)
                 val obj = json.parseToJsonElement(resp.body!!.string()).jsonObject
                 obj["@microsoft.graph.downloadUrl"]?.jsonPrimitive?.content
                     ?: throw GraphException("OneDrive didn't give a download link.")

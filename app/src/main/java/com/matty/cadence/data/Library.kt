@@ -71,9 +71,13 @@ class Library(context: Context) {
         } catch (e: GraphException) {
             when (e.code) {
                 404 -> { books = emptyList(); status = LibraryStatus.Ready }
-                401 -> status = LibraryStatus.NeedsSignIn
+                401, 403 -> { auth.report(e.message ?: "OneDrive refused access."); status = LibraryStatus.NeedsSignIn }
                 else -> if (!(quiet && books.isNotEmpty())) status = LibraryStatus.Failed(e.message ?: "OneDrive error")
             }
+        } catch (e: java.net.UnknownHostException) {
+            if (!(quiet && books.isNotEmpty())) status = LibraryStatus.Failed(
+                "This tablet can't look up ${e.message?.substringAfter("host \"")?.substringBefore("\"") ?: "Microsoft's servers"}. " +
+                "Check the Wi-Fi, then Settings › Connections › More connection settings › Private DNS (set it to Automatic) and turn off any ad-blocker or VPN app.")
         } catch (e: Exception) {
             if (!(quiet && books.isNotEmpty())) status = LibraryStatus.Failed("Couldn't load the library — ${e.message}")
         }
