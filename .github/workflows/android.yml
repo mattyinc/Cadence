@@ -1,0 +1,57 @@
+name: Build Cadence for Android
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Build APK
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log
+          cp app/build/outputs/apk/release/app-release.apk "Cadence-1.0.${{ github.run_number }}.apk"
+
+      - name: Publish to Releases
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Cadence 1.0.${{ github.run_number }}
+          body: "Install on your Android tablet: download the APK below and open it. Each build installs over the previous one."
+          files: Cadence-1.0.${{ github.run_number }}.apk
+          make_latest: true
+
+      # Build result + compiler errors on the ci-status branch, readable with plain git.
+      - name: Report status
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p /tmp/status && cd /tmp/status
+          echo "run=${{ github.run_number }} status=${{ job.status }} sha=${{ github.sha }}" > STATUS
+          if [ -f "$GITHUB_WORKSPACE/build.log" ]; then
+            tail -c 80000 "$GITHUB_WORKSPACE/build.log" > build-tail.log
+            grep -nE "^e: |error:|What went wrong|FAILED|BUILD SUCCESSFUL|BUILD FAILED" "$GITHUB_WORKSPACE/build.log" | head -200 > errors.txt || true
+          fi
+          git init -q -b ci-status
+          git add -A
+          git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm "CI run ${{ github.run_number }}: ${{ job.status }}"
+          git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" ci-status
