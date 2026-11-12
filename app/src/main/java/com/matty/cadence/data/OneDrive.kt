@@ -4,8 +4,13 @@ import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -64,7 +69,7 @@ class OneDriveAuth(context: Context) {
     }
 
     /** Starts device-code sign-in; call [poll] next (from a coroutine) to wait for approval. */
-    suspend fun startSignIn(): DeviceCode? {
+    private suspend fun startSignIn(): DeviceCode? {
         error = null
         return try {
             val r = post("${OneDriveConfig.AUTH}/devicecode",
@@ -72,7 +77,7 @@ class OneDriveAuth(context: Context) {
             val user = r.str("user_code")
             val device = r.str("device_code")
             if (user == null || device == null) {
-                error = r.str("error_description") ?: "Couldn't start sign-in."
+                error = r.str("error_description")?.lineSequence()?.firstOrNull() ?: "Couldn't start sign-in (no answer from Microsoft)."
                 null
             } else {
                 val code = DeviceCode(
@@ -91,25 +96,60 @@ class OneDriveAuth(context: Context) {
         }
     }
 
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val nudge = Channel<Unit>(Channel.CONFLATED)
+    private var job: Job? = null
+    var checking by mutableStateOf(false)
+        private set
+
+    /**
+     * Whole sign-in, owned by the app (not by whatever screen is showing) so it survives
+     * switching to the browser and back. [onDone] runs once the account is connected.
+     */
+    fun signIn(onDone: suspend () -> Unit) {
+        job?.cancel()
+        job = scope.launch {
+            val code = startSignIn() ?: return@launch
+            if (poll(code)) onDone()
+        }
+    }
+
+    /** "I've approved it" / coming back to the app: ask Microsoft right away instead of waiting. */
+    fun checkNow() { nudge.trySend(Unit) }
+
     /** Waits until the code is approved (true), refused or expired (false). */
-    suspend fun poll(code: DeviceCode): Boolean {
+    private suspend fun poll(code: DeviceCode): Boolean {
+        var wait = code.interval * 1000L
         while (System.currentTimeMillis() < code.expiresAt) {
-            delay(code.interval * 1000L)
+            withTimeoutOrNull(wait) { nudge.receive() }
             if (pending != code) return false              // cancelled / restarted
+            checking = true
             val r = try {
                 post("${OneDriveConfig.AUTH}/token", mapOf(
                     "grant_type" to "urn:ietf:params:oauth:grant-type:device_code",
                     "client_id" to OneDriveConfig.CLIENT_ID, "device_code" to code.deviceCode))
-            } catch (e: Exception) { continue }
+            } catch (e: Exception) {
+                checking = false
+                continue                                    // network blip — keep waiting
+            }
+            checking = false
             if (store(r)) {
                 pending = null
+                error = null
                 return true
             }
-            val err = r.str("error")
-            if (err != "authorization_pending" && err != "slow_down") {
-                error = r.str("error_description") ?: "Sign-in failed."
-                pending = null
-                return false
+            when (val err = r.str("error")) {
+                "authorization_pending" -> {}
+                "slow_down" -> wait += 5000
+                else -> {
+                    error = when (err) {
+                        "authorization_declined" -> "Sign-in was declined on the Microsoft page."
+                        "expired_token" -> "The code expired — try again."
+                        else -> "Microsoft said: " + (r.str("error_description")?.lineSequence()?.firstOrNull() ?: err ?: "unknown error")
+                    }
+                    pending = null
+                    return false
+                }
             }
         }
         if (pending == code) {
@@ -120,6 +160,8 @@ class OneDriveAuth(context: Context) {
     }
 
     fun cancelSignIn() {
+        job?.cancel()
+        checking = false
         pending = null
     }
 

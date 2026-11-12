@@ -178,17 +178,15 @@ fun SignInCard() {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(color = pal.text, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(10.dp))
-                    Text("Waiting for you to approve…", color = pal.secondary, fontSize = 15.sp)
+                    Text(if (auth.checking) "Checking with Microsoft…" else "Waiting for you to approve…", color = pal.secondary, fontSize = 15.sp)
                 }
+                Pill("I've approved it") { auth.checkNow() }
             } else {
                 Text("Cadence reads your books from OneDrive › Apps › Cadence — the same library as your Apple TV. It can't see any of your other files.",
                     color = pal.secondary, fontSize = 16.sp)
                 auth.error?.let { Text(it, color = pal.secondary, fontSize = 15.sp) }
                 Pill("Sign in with Microsoft", selected = true) {
-                    scope.launch {
-                        val code = auth.startSignIn() ?: return@launch
-                        if (auth.poll(code)) library.refresh()
-                    }
+                    auth.signIn { library.refresh() }
                 }
             }
         }

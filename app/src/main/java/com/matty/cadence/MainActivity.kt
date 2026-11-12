@@ -15,4 +15,11 @@ class MainActivity : ComponentActivity() {
         val app = application as CadenceApplication
         setContent { CadenceApp(app.library, app.prefs) }
     }
+
+    /** Back from the Microsoft page: check straight away instead of waiting for the next poll. */
+    override fun onResume() {
+        super.onResume()
+        val auth = (application as CadenceApplication).library.auth
+        if (auth.pending != null) auth.checkNow()
+    }
 }
