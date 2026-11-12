@@ -1,6 +1,8 @@
 package com.matty.cadence.data
 
 import android.content.Context
+import android.net.Uri
+import com.matty.cadence.Playback
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -104,14 +106,19 @@ class Library(context: Context) {
         }
     }
 
+    private val coverDir = File(context.cacheDir, "covers").apply { mkdirs() }
+
+    /** Cover as a local file (downloaded once per cover revision) — for the shelves and the lock screen. */
     suspend fun coverUrl(b: BookSummary): String? {
         if (b.hasCover != true) return null
-        val key = "${b.id}#${b.coverRev ?: 0}"
-        coverLinks[key]?.let { return it }
-        return runCatching { files.downloadUrl("books/${b.id}/cover.jpg") }.getOrNull()?.also { coverLinks[key] = it }
+        val f = File(coverDir, "${b.id}-${b.coverRev ?: 0}.jpg")
+        if (!f.exists()) {
+            val data = runCatching { files.bytes("books/${b.id}/cover.jpg") }.getOrNull() ?: return null
+            withContext(Dispatchers.IO) { f.writeBytes(data) }
+        }
+        return Uri.fromFile(f).toString()
     }
 
-    /** Cover link for the lock screen / notification artwork (null if the book has none). */
     suspend fun coverUrl(bookId: String): String? {
         val b = books.firstOrNull { it.id == bookId } ?: return null
         return coverUrl(b)
@@ -120,7 +127,9 @@ class Library(context: Context) {
     /** A fresh streaming link (OneDrive's expire after about an hour). */
     suspend fun audioUrl(book: Book): String? {
         val a = book.audio ?: return null
-        return runCatching { files.downloadUrl("books/${book.id}/${a.file}") }.getOrNull()
+        val token = runCatching { files.token() }.getOrNull() ?: return null
+        Playback.authorize(token)          // streamed straight from Graph with the account's token
+        return files.contentUrl("books/${book.id}/${a.file}")
     }
 
     // ---------------------------------------------------------------- reading positions

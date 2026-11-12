@@ -220,12 +220,14 @@ internal fun graphError(resp: okhttp3.Response): GraphException {
     return GraphException("OneDrive said ${resp.code}" + (msg?.let { ": $it" } ?: "") + " (${resp.request.url.host})", resp.code)
 }
 
-/** Client for signed storage links: never carries a token, identifies itself plainly. */
-private val plain: OkHttpClient by lazy {
-    http.newBuilder().addInterceptor { chain ->
-        chain.proceed(chain.request().newBuilder().removeHeader("Authorization").header("User-Agent", "Cadence/1.0 (Android)").build())
-    }.build()
-}
+private val noRedirect: OkHttpClient by lazy { http.newBuilder().followRedirects(false).followSslRedirects(false).build() }
+
+/** Last resort when Graph still redirects: the signed link, fetched with no token. */
+private fun fetchPlain(link: String): ByteArray =
+    http.newCall(Request.Builder().url(link).header("User-Agent", "Cadence/1.0 (Android)").build()).execute().use { r ->
+        if (r.isSuccessful) return r.body!!.bytes()
+        throw GraphException("OneDrive storage said ${r.code} (${r.request.url.host})", r.code)
+    }
 
 /** Reads files from the Cadence app folder. */
 class OneDriveFiles(private val auth: OneDriveAuth) {
@@ -235,20 +237,31 @@ class OneDriveFiles(private val auth: OneDriveAuth) {
     }
 
     /**
-     * Small files: library.json, book.json. Personal OneDrive keeps file bodies on
-     * my.microsoftpersonalcontent.com, which only accepts the item's signed download link (tempauth)
-     * fetched with no Authorization header — so: metadata from Graph first, then the plain link.
+     * Small files: library.json, book.json, covers. "Prefer: noredirect" makes Graph hand back the bytes
+     * itself instead of redirecting to a signed my.microsoftpersonalcontent.com link — those signed (tempauth)
+     * links are being retired and already answer 401 for some personal accounts.
      */
     suspend fun bytes(rel: String): ByteArray {
-        val link = downloadUrl(rel)
+        val token = auth.token()
         return withContext(Dispatchers.IO) {
-            plain.newCall(Request.Builder().url(link).build()).execute().use { r ->
-                if (r.isSuccessful) return@use r.body!!.bytes()
-                val snippet = runCatching { r.body?.string().orEmpty().take(140) }.getOrDefault("")
-                throw GraphException("OneDrive storage said ${r.code} (${r.request.url.host}) $snippet".trim(), r.code)
+            val req = Request.Builder().url(contentUrl(rel))
+                .header("Authorization", "Bearer $token").header("Prefer", "noredirect").build()
+            noRedirect.newCall(req).execute().use { r ->
+                if (r.code == 404) throw GraphException("Not found in OneDrive › Apps › Cadence.", 404)
+                if (r.isRedirect) {
+                    val loc = r.header("Location") ?: throw GraphException("OneDrive redirect without a location.", r.code)
+                    return@withContext fetchPlain(loc)
+                }
+                if (!r.isSuccessful) throw graphError(r)
+                r.body!!.bytes()
             }
         }
     }
+
+    /** Graph's content endpoint for a file — streamed with the Graph token (audio). */
+    fun contentUrl(rel: String): String = url(rel, ":/content")
+
+    suspend fun token(): String = auth.token()
 
     /** Writes a small file (reading positions). */
     suspend fun put(rel: String, data: ByteArray, contentType: String = "application/json") {

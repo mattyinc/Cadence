@@ -6,7 +6,9 @@ import android.content.Context
 import android.content.Intent
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaController
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -21,8 +23,18 @@ import com.google.common.util.concurrent.ListenableFuture
 object Playback {
     private var player: ExoPlayer? = null
 
+    /** Audio comes from Graph's content endpoint: send the token, and ask for the bytes rather than a redirect. */
+    private val source = DefaultHttpDataSource.Factory()
+        .setAllowCrossProtocolRedirects(true)
+        .setUserAgent("Cadence/1.0 (Android)")
+
+    fun authorize(token: String) {
+        source.setDefaultRequestProperties(mapOf("Authorization" to "Bearer $token", "Prefer" to "noredirect"))
+    }
+
     fun player(context: Context): ExoPlayer =
         player ?: ExoPlayer.Builder(context.applicationContext)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(source))
             .setAudioAttributes(
                 AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_SPEECH).build(),
                 /* handleAudioFocus = */ true,
