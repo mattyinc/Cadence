@@ -220,18 +220,11 @@ internal fun graphError(resp: okhttp3.Response): GraphException {
     return GraphException("OneDrive said ${resp.code}" + (msg?.let { ": $it" } ?: "") + " (${resp.request.url.host})", resp.code)
 }
 
-private val noRedirect: OkHttpClient by lazy { http.newBuilder().followRedirects(false).followSslRedirects(false).build() }
-
-/** Storage link: usually pre-authenticated; if it wants the token after all, send it. */
-private fun download(loc: String, token: String): ByteArray {
-    http.newCall(Request.Builder().url(loc).build()).execute().use { r ->
-        if (r.isSuccessful) return r.body!!.bytes()
-        if (r.code != 401 && r.code != 403) throw graphError(r)
-    }
-    http.newCall(Request.Builder().url(loc).header("Authorization", "Bearer $token").build()).execute().use { r ->
-        if (r.isSuccessful) return r.body!!.bytes()
-        throw GraphException("OneDrive storage said ${r.code} (${r.request.url.host}).", r.code)
-    }
+/** Client for signed storage links: never carries a token, identifies itself plainly. */
+private val plain: OkHttpClient by lazy {
+    http.newBuilder().addInterceptor { chain ->
+        chain.proceed(chain.request().newBuilder().removeHeader("Authorization").header("User-Agent", "Cadence/1.0 (Android)").build())
+    }.build()
 }
 
 /** Reads files from the Cadence app folder. */
@@ -241,22 +234,18 @@ class OneDriveFiles(private val auth: OneDriveAuth) {
         return "${OneDriveConfig.APPROOT}:/$path$suffix"
     }
 
-    /** Small files: library.json, book.json. */
+    /**
+     * Small files: library.json, book.json. Personal OneDrive keeps file bodies on
+     * my.microsoftpersonalcontent.com, which only accepts the item's signed download link (tempauth)
+     * fetched with no Authorization header — so: metadata from Graph first, then the plain link.
+     */
     suspend fun bytes(rel: String): ByteArray {
-        val token = auth.token()
+        val link = downloadUrl(rel)
         return withContext(Dispatchers.IO) {
-            // Graph answers /content with a redirect to OneDrive's file storage. OkHttp strips the
-            // Authorization header on cross-host redirects (the Apple TV's URLSession doesn't), and personal
-            // OneDrive storage then says a bare 401 — so follow the redirect ourselves.
-            val first = Request.Builder().url(url(rel, ":/content")).header("Authorization", "Bearer $token").build()
-            noRedirect.newCall(first).execute().use { resp ->
-                if (resp.code == 404) throw GraphException("Not found in OneDrive › Apps › Cadence.", 404)
-                if (resp.isRedirect) {
-                    val loc = resp.header("Location") ?: throw GraphException("OneDrive redirect without a location.", resp.code)
-                    return@withContext download(loc, token)
-                }
-                if (!resp.isSuccessful) throw graphError(resp)
-                resp.body!!.bytes()
+            plain.newCall(Request.Builder().url(link).build()).execute().use { r ->
+                if (r.isSuccessful) return@use r.body!!.bytes()
+                val snippet = runCatching { r.body?.string().orEmpty().take(140) }.getOrDefault("")
+                throw GraphException("OneDrive storage said ${r.code} (${r.request.url.host}) $snippet".trim(), r.code)
             }
         }
     }
