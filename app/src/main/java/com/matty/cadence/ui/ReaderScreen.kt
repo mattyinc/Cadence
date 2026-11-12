@@ -268,11 +268,12 @@ private fun SingleView(model: ReaderModel, family: FontFamily) {
     val prefs = LocalPrefs.current
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val inset = maxWidth * prefs.margins.inset
+        val h = maxHeight
         Column(Modifier.fillMaxSize().padding(horizontal = inset)) {
-            Spacer(Modifier.height(maxHeight * 0.07f))
+            Spacer(Modifier.height(h * 0.07f))
             Text(model.chapter.title.uppercase(), color = pal.inkSoft, fontSize = 14.sp, letterSpacing = 2.sp,
                 fontWeight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
-            Spacer(Modifier.height(maxHeight * 0.16f))
+            Spacer(Modifier.height(h * 0.16f))
             AnimatedContent(
                 targetState = model.current to model.chapterIndex,
                 transitionSpec = { fadeIn() togetherWith fadeOut() },
